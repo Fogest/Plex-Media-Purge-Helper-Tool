@@ -34,6 +34,36 @@ TAUTULLI_API_KEY = os.getenv('TAUTULLI_API_KEY', 'YOUR_TAUTULLI_API_KEY_HERE')
 
 
 # ============================================================================
+# SONARR CONFIGURATION
+# ============================================================================
+
+# Sonarr server URL (usually http://localhost:8989)
+SONARR_URL = os.getenv('SONARR_URL', 'http://localhost:8989')
+
+# Sonarr API key
+# Get from: Sonarr Settings > General > Security > API Key
+SONARR_API_KEY = os.getenv('SONARR_API_KEY', 'YOUR_SONARR_API_KEY_HERE')
+
+# Enable/disable Sonarr integration (adds (S) links to TV shows in reports)
+SONARR_ENABLED = True
+
+
+# ============================================================================
+# RADARR CONFIGURATION
+# ============================================================================
+
+# Radarr server URL (usually http://localhost:7878)
+RADARR_URL = os.getenv('RADARR_URL', 'http://localhost:7878')
+
+# Radarr API key
+# Get from: Radarr Settings > General > Security > API Key
+RADARR_API_KEY = os.getenv('RADARR_API_KEY', 'YOUR_RADARR_API_KEY_HERE')
+
+# Enable/disable Radarr integration (adds (R) links to movies in reports)
+RADARR_ENABLED = True
+
+
+# ============================================================================
 # LIBRARY EXCLUSIONS
 # ============================================================================
 

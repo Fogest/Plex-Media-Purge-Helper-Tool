@@ -31,6 +31,7 @@ from plex_client import PlexClient
 from tautulli_client import TautulliClient
 from analyzer import MediaAnalyzer
 from reporter import Reporter
+from arr_client import ArrClient
 
 
 def main():
@@ -101,6 +102,41 @@ def main():
     console.print("[green]✓[/green] Connected to Tautulli")
     console.print()
 
+    # Initialize Sonarr/Radarr client if enabled
+    arr_client = None
+    if hasattr(config, 'SONARR_ENABLED') and config.SONARR_ENABLED:
+        if hasattr(config, 'RADARR_ENABLED') and config.RADARR_ENABLED:
+            console.print("[cyan]Initializing Sonarr and Radarr clients...[/cyan]")
+        else:
+            console.print("[cyan]Initializing Sonarr client...[/cyan]")
+    elif hasattr(config, 'RADARR_ENABLED') and config.RADARR_ENABLED:
+        console.print("[cyan]Initializing Radarr client...[/cyan]")
+
+    if (hasattr(config, 'SONARR_ENABLED') and config.SONARR_ENABLED) or \
+       (hasattr(config, 'RADARR_ENABLED') and config.RADARR_ENABLED):
+        sonarr_url = config.SONARR_URL if hasattr(config, 'SONARR_ENABLED') and config.SONARR_ENABLED else None
+        sonarr_key = config.SONARR_API_KEY if hasattr(config, 'SONARR_ENABLED') and config.SONARR_ENABLED else None
+        radarr_url = config.RADARR_URL if hasattr(config, 'RADARR_ENABLED') and config.RADARR_ENABLED else None
+        radarr_key = config.RADARR_API_KEY if hasattr(config, 'RADARR_ENABLED') and config.RADARR_ENABLED else None
+
+        arr_client = ArrClient(sonarr_url, sonarr_key, radarr_url, radarr_key)
+
+        # Check connection status
+        status = arr_client.get_connection_status()
+        if hasattr(config, 'SONARR_ENABLED') and config.SONARR_ENABLED:
+            if status['sonarr']:
+                console.print("[green]✓[/green] Connected to Sonarr")
+            else:
+                console.print("[yellow]⚠[/yellow] Could not connect to Sonarr (will use cached data if available)")
+
+        if hasattr(config, 'RADARR_ENABLED') and config.RADARR_ENABLED:
+            if status['radarr']:
+                console.print("[green]✓[/green] Connected to Radarr")
+            else:
+                console.print("[yellow]⚠[/yellow] Could not connect to Radarr (will use cached data if available)")
+
+        console.print()
+
     # Get libraries
     console.print("[cyan]Fetching libraries...[/cyan]")
     libraries = plex.get_libraries(config.EXCLUDED_LIBRARIES)
@@ -156,7 +192,8 @@ def main():
         config.OUTPUT_DIR,
         plex_url=config.PLEX_URL,
         tautulli_url=config.TAUTULLI_URL,
-        plex_server_id=plex_server_id
+        plex_server_id=plex_server_id,
+        arr_client=arr_client
     )
     reporter.generate_report(categories, stats, format=args.format)
 

@@ -150,6 +150,21 @@ class PlexClient:
             # Get view count from Plex (basic tracking)
             view_count = item.viewCount if hasattr(item, 'viewCount') and item.viewCount else 0
 
+            # Extract external IDs from guids (TVDB, TMDB, IMDB)
+            tvdb_id = None
+            tmdb_id = None
+            imdb_id = None
+
+            if hasattr(item, 'guids'):
+                for guid in item.guids:
+                    guid_str = guid.id
+                    if guid_str.startswith('tvdb://'):
+                        tvdb_id = guid_str.replace('tvdb://', '')
+                    elif guid_str.startswith('tmdb://'):
+                        tmdb_id = guid_str.replace('tmdb://', '')
+                    elif guid_str.startswith('imdb://'):
+                        imdb_id = guid_str.replace('imdb://', '')
+
             return {
                 'title': item.title,
                 'year': item.year if hasattr(item, 'year') else None,
@@ -161,6 +176,9 @@ class PlexClient:
                 'type': library_type,
                 'view_count': view_count,
                 'guid': item.guid if hasattr(item, 'guid') else None,
+                'tvdb_id': tvdb_id,
+                'tmdb_id': tmdb_id,
+                'imdb_id': imdb_id,
             }
 
         except Exception as e:

@@ -24,7 +24,7 @@ class Reporter:
         'cat5_large_shows': 'Category 5: Large TV Series (Over 100GB)',
     }
 
-    def __init__(self, output_dir: str = 'output', plex_url: str = None, tautulli_url: str = None, plex_server_id: str = None):
+    def __init__(self, output_dir: str = 'output', plex_url: str = None, tautulli_url: str = None, plex_server_id: str = None, arr_client=None):
         """
         Initialize Reporter
 
@@ -33,11 +33,13 @@ class Reporter:
             plex_url: Plex server URL for generating links
             tautulli_url: Tautulli server URL for generating links
             plex_server_id: Plex server machine identifier
+            arr_client: ArrClient instance for Sonarr/Radarr integration
         """
         self.output_dir = output_dir
         self.plex_url = plex_url.rstrip('/') if plex_url else None
         self.tautulli_url = tautulli_url.rstrip('/') if tautulli_url else None
         self.plex_server_id = plex_server_id
+        self.arr_client = arr_client
         self.console = Console()
 
     def _get_plex_web_url(self, rating_key: str, media_type: str) -> str:
@@ -70,6 +72,85 @@ class Reporter:
             return None
         return f"{self.tautulli_url}/info?rating_key={rating_key}"
 
+    def _get_sonarr_url(self, tvdb_id: str) -> str:
+        """
+        Generate Sonarr URL for a TV show
+
+        Args:
+            tvdb_id: TVDB ID of the series
+
+        Returns:
+            Sonarr URL or None
+        """
+        if not self.arr_client or not tvdb_id:
+            return None
+        return self.arr_client.get_sonarr_url(tvdb_id)
+
+    def _get_radarr_url(self, tmdb_id: str = None, imdb_id: str = None) -> str:
+        """
+        Generate Radarr URL for a movie
+
+        Args:
+            tmdb_id: TMDB ID of the movie
+            imdb_id: IMDB ID of the movie
+
+        Returns:
+            Radarr URL or None
+        """
+        if not self.arr_client:
+            return None
+        return self.arr_client.get_radarr_url(tmdb_id, imdb_id)
+
+    def _prefetch_arr_urls(self, categories: Dict):
+        """
+        Pre-fetch Sonarr/Radarr URLs for all items with progress indicator
+
+        Args:
+            categories: Categorized media dictionary
+        """
+        if not self.arr_client:
+            return
+
+        from rich.progress import Progress, SpinnerColumn, TextColumn
+
+        # Count total items that need lookup
+        total_items = 0
+        for cat_data in categories.values():
+            for item in cat_data['movies']:
+                if item.get('tmdb_id') or item.get('imdb_id'):
+                    total_items += 1
+            for item in cat_data['shows']:
+                if item.get('tvdb_id'):
+                    total_items += 1
+
+        if total_items == 0:
+            return
+
+        self.console.print("[cyan]Fetching Sonarr/Radarr links...[/cyan]")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=self.console
+        ) as progress:
+            task = progress.add_task(f"Looking up {total_items} items...", total=total_items)
+
+            for cat_data in categories.values():
+                # Pre-fetch movie URLs
+                for item in cat_data['movies']:
+                    if item.get('tmdb_id') or item.get('imdb_id'):
+                        self._get_radarr_url(item.get('tmdb_id'), item.get('imdb_id'))
+                        progress.advance(task)
+
+                # Pre-fetch show URLs
+                for item in cat_data['shows']:
+                    if item.get('tvdb_id'):
+                        self._get_sonarr_url(item['tvdb_id'])
+                        progress.advance(task)
+
+        self.console.print("[green]✓[/green] Arr links fetched")
+        self.console.print()
+
     def generate_report(self, categories: Dict, stats: Dict, format: str = 'terminal'):
         """
         Generate report in specified format
@@ -79,6 +160,10 @@ class Reporter:
             stats: Category statistics dictionary
             format: Output format ('terminal', 'markdown', 'html', 'all')
         """
+        # Pre-fetch arr URLs if generating markdown or html (not needed for terminal)
+        if (format == 'markdown' or format == 'html' or format == 'all') and self.arr_client:
+            self._prefetch_arr_urls(categories)
+
         if format == 'terminal' or format == 'all':
             self.print_terminal_report(categories, stats)
 
@@ -286,6 +371,18 @@ class Reporter:
             if tautulli_url:
                 title = f"{title} [(T)]({tautulli_url})"
 
+            # Add Sonarr link as (S) for TV shows
+            if item['type'] == 'show' and item.get('tvdb_id'):
+                sonarr_url = self._get_sonarr_url(item['tvdb_id'])
+                if sonarr_url:
+                    title = f"{title} [(S)]({sonarr_url})"
+
+            # Add Radarr link as (R) for movies
+            if item['type'] == 'movie' and (item.get('tmdb_id') or item.get('imdb_id')):
+                radarr_url = self._get_radarr_url(item.get('tmdb_id'), item.get('imdb_id'))
+                if radarr_url:
+                    title = f"{title} [(R)]({radarr_url})"
+
             size = f"{item['size_gb']:.2f} GB"
             added = item['added_at'].strftime('%Y-%m-%d') if item['added_at'] else 'N/A'
 
@@ -342,12 +439,42 @@ class Reporter:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Plex Media Purge Analysis Report</title>
     <style>
+        :root {{
+            --bg-primary: #f5f5f5;
+            --bg-secondary: white;
+            --bg-tertiary: #f8f9fa;
+            --bg-section: #e3f2fd;
+            --text-primary: #000;
+            --text-secondary: #666;
+            --text-tertiary: #1976d2;
+            --border-color: #e0e0e0;
+            --border-color-secondary: #dee2e6;
+            --hover-bg: #f8f9fa;
+            --section-hover: #bbdefb;
+        }}
+
+        [data-theme="dark"] {{
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2d2d2d;
+            --bg-tertiary: #3a3a3a;
+            --bg-section: #2a4a5a;
+            --text-primary: #e0e0e0;
+            --text-secondary: #b0b0b0;
+            --text-tertiary: #64b5f6;
+            --border-color: #404040;
+            --border-color-secondary: #505050;
+            --hover-bg: #3a3a3a;
+            --section-hover: #3a5a6a;
+        }}
+
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             max-width: 1400px;
             margin: 0 auto;
             padding: 20px;
-            background-color: #f5f5f5;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            transition: background-color 0.3s, color 0.3s;
         }}
         .header {{
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -356,12 +483,44 @@ class Reporter:
             border-radius: 10px;
             margin-bottom: 30px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }}
+        .header-content {{
+            flex: 1;
         }}
         .header h1 {{
             margin: 0 0 10px 0;
         }}
+        .theme-toggle {{
+            display: flex;
+            gap: 5px;
+            background: rgba(255,255,255,0.2);
+            padding: 5px;
+            border-radius: 8px;
+        }}
+        .theme-btn {{
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            background: transparent;
+            color: white;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background 0.3s;
+        }}
+        .theme-btn:hover {{
+            background: rgba(255,255,255,0.2);
+        }}
+        .theme-btn.active {{
+            background: rgba(255,255,255,0.3);
+            font-weight: bold;
+        }}
         .summary {{
-            background: white;
+            background: var(--bg-secondary);
             padding: 20px;
             border-radius: 8px;
             margin-bottom: 30px;
@@ -381,11 +540,11 @@ class Reporter:
             color: #667eea;
         }}
         .stat-label {{
-            color: #666;
+            color: var(--text-secondary);
             font-size: 0.9em;
         }}
         .category {{
-            background: white;
+            background: var(--bg-secondary);
             margin-bottom: 30px;
             border-radius: 8px;
             overflow: hidden;
@@ -424,14 +583,14 @@ class Reporter:
         }}
         .category-stats {{
             padding: 15px 20px;
-            background: #f8f9fa;
-            border-bottom: 1px solid #e0e0e0;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border-color);
         }}
         .section-header {{
-            background: #e3f2fd;
+            background: var(--bg-section);
             padding: 12px 20px;
             font-weight: bold;
-            color: #1976d2;
+            color: var(--text-tertiary);
             margin-top: 10px;
             cursor: pointer;
             user-select: none;
@@ -441,7 +600,7 @@ class Reporter:
             transition: background 0.3s;
         }}
         .section-header:hover {{
-            background: #bbdefb;
+            background: var(--section-hover);
         }}
         .section-header .toggle-icon {{
             font-size: 1em;
@@ -463,20 +622,20 @@ class Reporter:
             border-collapse: collapse;
         }}
         th {{
-            background: #f8f9fa;
+            background: var(--bg-tertiary);
             padding: 12px;
             text-align: left;
             font-weight: 600;
-            border-bottom: 2px solid #dee2e6;
+            border-bottom: 2px solid var(--border-color-secondary);
             position: sticky;
             top: 0;
         }}
         td {{
             padding: 10px 12px;
-            border-bottom: 1px solid #e0e0e0;
+            border-bottom: 1px solid var(--border-color);
         }}
         tr:hover {{
-            background-color: #f8f9fa;
+            background-color: var(--hover-bg);
         }}
         .watched-yes {{
             color: #28a745;
@@ -495,16 +654,16 @@ class Reporter:
             font-family: monospace;
         }}
         .date-column {{
-            color: #666;
+            color: var(--text-secondary);
         }}
         .footer {{
             text-align: center;
             padding: 20px;
-            color: #666;
+            color: var(--text-secondary);
             font-size: 0.9em;
         }}
         .controls {{
-            background: white;
+            background: var(--bg-secondary);
             padding: 15px 20px;
             border-radius: 8px;
             margin-bottom: 20px;
@@ -529,8 +688,15 @@ class Reporter:
 </head>
 <body>
     <div class="header">
-        <h1>Plex Media Purge Analysis Report</h1>
-        <p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <div class="header-content">
+            <h1>Plex Media Purge Analysis Report</h1>
+            <p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        </div>
+        <div class="theme-toggle">
+            <button class="theme-btn" onclick="setTheme('light')" id="theme-light">Light</button>
+            <button class="theme-btn" onclick="setTheme('dark')" id="theme-dark">Dark</button>
+            <button class="theme-btn active" onclick="setTheme('system')" id="theme-system">System</button>
+        </div>
     </div>
 
     <div class="summary">
@@ -567,6 +733,43 @@ class Reporter:
     </div>
 
     <script>
+        // Theme management
+        function setTheme(theme) {{
+            localStorage.setItem('theme', theme);
+            applyTheme(theme);
+            updateThemeButtons(theme);
+        }}
+
+        function applyTheme(theme) {{
+            if (theme === 'system') {{
+                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+            }} else {{
+                document.documentElement.setAttribute('data-theme', theme);
+            }}
+        }}
+
+        function updateThemeButtons(activeTheme) {{
+            document.querySelectorAll('.theme-btn').forEach(btn => {{
+                btn.classList.remove('active');
+            }});
+            document.getElementById(`theme-${{activeTheme}}`).classList.add('active');
+        }}
+
+        function initTheme() {{
+            const savedTheme = localStorage.getItem('theme') || 'system';
+            applyTheme(savedTheme);
+            updateThemeButtons(savedTheme);
+
+            // Listen for system theme changes
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {{
+                const currentTheme = localStorage.getItem('theme') || 'system';
+                if (currentTheme === 'system') {{
+                    applyTheme('system');
+                }}
+            }});
+        }}
+
         // Toggle category visibility
         function toggleCategory(header) {{
             const content = header.nextElementSibling;
@@ -607,6 +810,9 @@ class Reporter:
 
         // Add event listeners to all category headers
         document.addEventListener('DOMContentLoaded', function() {{
+            // Initialize theme
+            initTheme();
+
             const categoryHeaders = document.querySelectorAll('.category-header');
             categoryHeaders.forEach(header => {{
                 header.addEventListener('click', () => toggleCategory(header));
@@ -722,6 +928,18 @@ class Reporter:
             tautulli_url = self._get_tautulli_url(str(item['rating_key']))
             if tautulli_url:
                 title = f'{title} <a href="{tautulli_url}" target="_blank" style="color: #764ba2; text-decoration: none; font-size: 0.85em;" title="View in Tautulli">(T)</a>'
+
+            # Add Sonarr link for TV shows
+            if item['type'] == 'show' and item.get('tvdb_id'):
+                sonarr_url = self._get_sonarr_url(item['tvdb_id'])
+                if sonarr_url:
+                    title = f'{title} <a href="{sonarr_url}" target="_blank" style="color: #4CAF50; text-decoration: none; font-size: 0.85em;" title="View in Sonarr">(S)</a>'
+
+            # Add Radarr link for movies
+            if item['type'] == 'movie' and (item.get('tmdb_id') or item.get('imdb_id')):
+                radarr_url = self._get_radarr_url(item.get('tmdb_id'), item.get('imdb_id'))
+                if radarr_url:
+                    title = f'{title} <a href="{radarr_url}" target="_blank" style="color: #FF9800; text-decoration: none; font-size: 0.85em;" title="View in Radarr">(R)</a>'
 
             size = f"{item['size_gb']:.2f} GB"
             added = item['added_at'].strftime('%Y-%m-%d') if item['added_at'] else 'N/A'
