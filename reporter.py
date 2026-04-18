@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
+import html as html_lib
 import os
 
 
@@ -684,6 +685,66 @@ class Reporter:
         .btn:hover {{
             background: #5568d3;
         }}
+        .badge-ended {{
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: #6c757d;
+            color: #fff;
+            font-size: 0.72em;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+            vertical-align: middle;
+            margin-left: 5px;
+            white-space: nowrap;
+        }}
+        .delete-btn {{
+            padding: 5px 12px;
+            border: none;
+            border-radius: 4px;
+            background: #dc3545;
+            color: white;
+            cursor: pointer;
+            font-size: 0.82em;
+            transition: background 0.2s, opacity 0.2s;
+            white-space: nowrap;
+        }}
+        .delete-btn:hover:not(:disabled) {{
+            background: #c82333;
+        }}
+        .delete-btn:disabled {{
+            opacity: 0.6;
+            cursor: not-allowed;
+        }}
+        tr.row-deleted {{
+            background-color: rgba(40, 167, 69, 0.15) !important;
+            color: var(--text-secondary);
+        }}
+        tr.row-deleted td {{
+            text-decoration: line-through;
+            opacity: 0.7;
+        }}
+        tr.row-failed {{
+            background-color: rgba(220, 53, 69, 0.12) !important;
+        }}
+        #toast {{
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: #323232;
+            color: #fff;
+            padding: 12px 20px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+            z-index: 9999;
+        }}
+        #toast.toast-visible {{
+            opacity: 1;
+        }}
     </style>
 </head>
 <body>
@@ -727,102 +788,169 @@ class Reporter:
             if cat_stats['total_items'] > 0:
                 html_content += self._generate_html_category(cat_key, cat_data, cat_stats)
 
+        # Inject ARR config for client-side delete
+        import json as json_lib
+        arr_config = {'sonarr': None, 'radarr': None}
+        if self.arr_client:
+            sonarr_creds = self.arr_client.get_sonarr_credentials()
+            if sonarr_creds:
+                arr_config['sonarr'] = {'url': html_lib.escape(sonarr_creds[0]), 'apiKey': html_lib.escape(sonarr_creds[1])}
+            radarr_creds = self.arr_client.get_radarr_credentials()
+            if radarr_creds:
+                arr_config['radarr'] = {'url': html_lib.escape(radarr_creds[0]), 'apiKey': html_lib.escape(radarr_creds[1])}
+        html_content += f"""
+    <script>
+        window.ARR_CONFIG = {json_lib.dumps(arr_config)};
+    </script>
+"""
+
         html_content += """
     <div class="footer">
         <p>Plex Media Purge Helper Tool</p>
     </div>
 
+    <div id="toast"></div>
+
     <script>
         // Theme management
-        function setTheme(theme) {{
+        function setTheme(theme) {
             localStorage.setItem('theme', theme);
             applyTheme(theme);
             updateThemeButtons(theme);
-        }}
+        }
 
-        function applyTheme(theme) {{
-            if (theme === 'system') {{
+        function applyTheme(theme) {
+            if (theme === 'system') {
                 const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
                 document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
-            }} else {{
+            } else {
                 document.documentElement.setAttribute('data-theme', theme);
-            }}
-        }}
+            }
+        }
 
-        function updateThemeButtons(activeTheme) {{
-            document.querySelectorAll('.theme-btn').forEach(btn => {{
+        function updateThemeButtons(activeTheme) {
+            document.querySelectorAll('.theme-btn').forEach(btn => {
                 btn.classList.remove('active');
-            }});
-            document.getElementById(`theme-${{activeTheme}}`).classList.add('active');
-        }}
+            });
+            document.getElementById(`theme-${activeTheme}`).classList.add('active');
+        }
 
-        function initTheme() {{
+        function initTheme() {
             const savedTheme = localStorage.getItem('theme') || 'system';
             applyTheme(savedTheme);
             updateThemeButtons(savedTheme);
 
             // Listen for system theme changes
-            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {{
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
                 const currentTheme = localStorage.getItem('theme') || 'system';
-                if (currentTheme === 'system') {{
+                if (currentTheme === 'system') {
                     applyTheme('system');
-                }}
-            }});
-        }}
+                }
+            });
+        }
 
         // Toggle category visibility
-        function toggleCategory(header) {{
+        function toggleCategory(header) {
             const content = header.nextElementSibling;
             header.classList.toggle('collapsed');
             content.classList.toggle('collapsed');
-        }}
+        }
 
         // Toggle section visibility
-        function toggleSection(header) {{
+        function toggleSection(header) {
             const content = header.nextElementSibling;
             header.classList.toggle('collapsed');
             content.classList.toggle('collapsed');
-        }}
+        }
 
         // Expand all categories and sections
-        function expandAll() {{
-            document.querySelectorAll('.category-header.collapsed').forEach(header => {{
+        function expandAll() {
+            document.querySelectorAll('.category-header.collapsed').forEach(header => {
                 header.classList.remove('collapsed');
                 header.nextElementSibling.classList.remove('collapsed');
-            }});
-            document.querySelectorAll('.section-header.collapsed').forEach(header => {{
+            });
+            document.querySelectorAll('.section-header.collapsed').forEach(header => {
                 header.classList.remove('collapsed');
                 header.nextElementSibling.classList.remove('collapsed');
-            }});
-        }}
+            });
+        }
 
         // Collapse all categories and sections
-        function collapseAll() {{
-            document.querySelectorAll('.category-header:not(.collapsed)').forEach(header => {{
+        function collapseAll() {
+            document.querySelectorAll('.category-header:not(.collapsed)').forEach(header => {
                 header.classList.add('collapsed');
                 header.nextElementSibling.classList.add('collapsed');
-            }});
-            document.querySelectorAll('.section-header:not(.collapsed)').forEach(header => {{
+            });
+            document.querySelectorAll('.section-header:not(.collapsed)').forEach(header => {
                 header.classList.add('collapsed');
                 header.nextElementSibling.classList.add('collapsed');
-            }});
-        }}
+            });
+        }
+
+        // Delete item via Sonarr/Radarr API
+        async function deleteItem(btn) {
+            const service = btn.dataset.service;
+            const id = btn.dataset.arrId;
+            const title = btn.dataset.title;
+            const cfg = window.ARR_CONFIG[service];
+            const row = btn.closest('tr');
+
+            btn.disabled = true;
+            btn.textContent = 'Deleting\u2026';
+
+            const path = service === 'sonarr'
+                ? `/api/v3/series/${id}?deleteFiles=true&addImportListExclusion=false`
+                : `/api/v3/movie/${id}?deleteFiles=true&addImportExclusion=false`;
+
+            try {
+                let res = await fetch(`${cfg.url}${path}`, {
+                    method: 'DELETE',
+                    headers: { 'X-Api-Key': cfg.apiKey }
+                }).catch(() => null);
+
+                if (!res || !res.ok) {
+                    const sep = path.includes('?') ? '&' : '?';
+                    res = await fetch(`${cfg.url}${path}${sep}apikey=${encodeURIComponent(cfg.apiKey)}`, {
+                        method: 'DELETE'
+                    });
+                }
+
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                row.classList.add('row-deleted');
+                btn.textContent = '\u2713 Deleted';
+                showToast(`Deleted: ${title}`);
+            } catch (err) {
+                row.classList.add('row-failed');
+                btn.textContent = '\u2717 Failed \u2014 retry';
+                btn.title = String(err);
+                btn.disabled = false;
+            }
+        }
+
+        let toastTimer = null;
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.classList.add('toast-visible');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => toast.classList.remove('toast-visible'), 2500);
+        }
 
         // Add event listeners to all category headers
-        document.addEventListener('DOMContentLoaded', function() {{
+        document.addEventListener('DOMContentLoaded', function() {
             // Initialize theme
             initTheme();
 
             const categoryHeaders = document.querySelectorAll('.category-header');
-            categoryHeaders.forEach(header => {{
+            categoryHeaders.forEach(header => {
                 header.addEventListener('click', () => toggleCategory(header));
-            }});
+            });
 
             const sectionHeaders = document.querySelectorAll('.section-header');
-            sectionHeaders.forEach(header => {{
+            sectionHeaders.forEach(header => {
                 header.addEventListener('click', () => toggleSection(header));
-            }});
-        }});
+            });
+        });
     </script>
 </body>
 </html>
@@ -908,6 +1036,7 @@ class Reporter:
                     <th style="text-align: center;">Status</th>
                     <th>Watched By (Progress)</th>
                     <th>Last Watched</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -929,11 +1058,14 @@ class Reporter:
             if tautulli_url:
                 title = f'{title} <a href="{tautulli_url}" target="_blank" style="color: #764ba2; text-decoration: none; font-size: 0.85em;" title="View in Tautulli">(T)</a>'
 
-            # Add Sonarr link for TV shows
+            # Add Sonarr link and ended badge for TV shows
             if item['type'] == 'show' and item.get('tvdb_id'):
                 sonarr_url = self._get_sonarr_url(item['tvdb_id'])
                 if sonarr_url:
                     title = f'{title} <a href="{sonarr_url}" target="_blank" style="color: #4CAF50; text-decoration: none; font-size: 0.85em;" title="View in Sonarr">(S)</a>'
+                series = self.arr_client.get_sonarr_series(item['tvdb_id']) if self.arr_client else None
+                if series and series.get('ended'):
+                    title = f'{title} <span class="badge-ended" title="Series has ended">ENDED</span>'
 
             # Add Radarr link for movies
             if item['type'] == 'movie' and (item.get('tmdb_id') or item.get('imdb_id')):
@@ -974,6 +1106,20 @@ class Reporter:
 
             last_watched = item['last_watched'].strftime('%Y-%m-%d') if item['last_watched'] else '-'
 
+            # Build delete button if ARR match exists
+            delete_cell = '<td></td>'
+            if self.arr_client:
+                if item['type'] == 'show' and item.get('tvdb_id'):
+                    series = self.arr_client.get_sonarr_series(item['tvdb_id'])
+                    if series and series.get('id'):
+                        safe_title = html_lib.escape(item['title'])
+                        delete_cell = f'<td><button class="delete-btn" data-service="sonarr" data-arr-id="{series["id"]}" data-title="{safe_title}" onclick="deleteItem(this)">Delete</button></td>'
+                elif item['type'] == 'movie' and (item.get('tmdb_id') or item.get('imdb_id')):
+                    movie = self.arr_client.get_radarr_movie(item.get('tmdb_id'), item.get('imdb_id'))
+                    if movie and movie.get('id'):
+                        safe_title = html_lib.escape(item['title'])
+                        delete_cell = f'<td><button class="delete-btn" data-service="radarr" data-arr-id="{movie["id"]}" data-title="{safe_title}" onclick="deleteItem(this)">Delete</button></td>'
+
             html += f"""
                 <tr>
                     <td>{title}</td>
@@ -982,6 +1128,7 @@ class Reporter:
                     <td style="text-align: center;" class="{status_class}">{status}</td>
                     <td>{users}</td>
                     <td class="date-column">{last_watched}</td>
+                    {delete_cell}
                 </tr>
 """
 

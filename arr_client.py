@@ -196,6 +196,16 @@ class ArrClient:
             print(f"Warning: Error looking up movie in Radarr ({id_str}): {e}")
             return None
 
+    def get_sonarr_credentials(self):
+        if self.sonarr_url and self.sonarr_api_key:
+            return (self.sonarr_url, self.sonarr_api_key)
+        return None
+
+    def get_radarr_credentials(self):
+        if self.radarr_url and self.radarr_api_key:
+            return (self.radarr_url, self.radarr_api_key)
+        return None
+
     def get_sonarr_url(self, tvdb_id: str) -> Optional[str]:
         """
         Get Sonarr web UI URL for a series.
